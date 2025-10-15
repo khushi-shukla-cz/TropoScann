@@ -1,4 +1,4 @@
-# TropoScan Integrated Backend
+# TropoScan Backend
 
 This is the integrated backend that combines the frontend requirements with the real AI model from mainbackend.
 

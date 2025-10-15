@@ -42,11 +42,9 @@ const TrajectoryForecast = ({
   const centerLon = coordinates[0];
   const centerLat = coordinates[1];
 
+  // Only initialize map once
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
-
-    console.log("Initializing TrajectoryForecast map");
-
     map.current = new maplibregl.Map({
       container: mapContainer.current,
       style: {
@@ -64,11 +62,22 @@ const TrajectoryForecast = ({
       center: [74, 19.5],
       zoom: 5.5
     });
-
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+    return () => {
+      if (map.current) {
+        map.current.remove();
+        map.current = null;
+      }
+    };
+  }, []);
 
-    map.current.on('load', () => {
-      console.log("TrajectoryForecast map loaded");
+  // Update trajectory and markers when forecastPath or intensityLevels change
+  useEffect(() => {
+    if (!map.current) return;
+    const updateLayers = () => {
+      // Remove old trajectory line and source
+      if (map.current!.getLayer('trajectory-line')) map.current!.removeLayer('trajectory-line');
+      if (map.current!.getSource('trajectory')) map.current!.removeSource('trajectory');
       // Add trajectory line
       map.current!.addSource('trajectory', {
         type: 'geojson',
@@ -81,7 +90,6 @@ const TrajectoryForecast = ({
           }
         }
       });
-
       map.current!.addLayer({
         id: 'trajectory-line',
         type: 'line',
@@ -97,7 +105,9 @@ const TrajectoryForecast = ({
           'line-dasharray': [2, 2]
         }
       });
-
+      // Remove old markers (by removing all children of mapContainer except the map canvas)
+      const markerEls = mapContainer.current?.querySelectorAll('.forecast-marker');
+      markerEls?.forEach(el => el.remove());
       // Add forecast points
       forecastPath.forEach((coord, i) => {
         const el = document.createElement('div');
@@ -111,7 +121,6 @@ const TrajectoryForecast = ({
           cursor: pointer;
           box-shadow: 0 2px 4px rgba(0,0,0,0.3);
         `;
-
         const popup = new maplibregl.Popup({ offset: 25 }).setHTML(`
           <div style="padding: 8px; text-align: center;">
             <strong>+${i * 24} hrs</strong><br/>
@@ -119,22 +128,22 @@ const TrajectoryForecast = ({
             <small>${coord[1].toFixed(2)}°N, ${coord[0].toFixed(2)}°E</small>
           </div>
         `);
-
         new maplibregl.Marker(el)
           .setLngLat(coord as [number, number])
           .setPopup(popup)
           .addTo(map.current!);
       });
-    });
-
-    return () => {
-      console.log("TrajectoryForecast cleanup");
-      if (map.current) {
-        map.current.remove();
-        map.current = null;
-      }
     };
-  }, [centerLon, centerLat, forecastPath, intensityLevels]);
+    if (map.current.isStyleLoaded()) {
+      updateLayers();
+    } else {
+      const onStyleLoad = () => {
+        updateLayers();
+        map.current!.off('style.load', onStyleLoad);
+      };
+      map.current.on('style.load', onStyleLoad);
+    }
+  }, [forecastPath, intensityLevels]);
 
   return (
   <div className="mt-8 text-white bg-white/10 p-4 md:p-6 rounded shadow-lg border border-white/10 responsive-padding responsive-text">

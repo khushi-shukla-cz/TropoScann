@@ -28,42 +28,9 @@ const StableTrajectoryForecast = ({
 
   console.log("StableTrajectoryForecast component rendered with forecastPath:", forecastPath.length);
 
+  // Only initialize map once
   useEffect(() => {
-    if (!mapContainer.current || isInitialized.current) return;
-
-    isInitialized.current = true;
-    console.log("Initializing StableTrajectoryForecast map");
-
-    // Use dynamic forecast path if provided, otherwise fall back to static demo
-    const forecastCoordinates: [number, number][] = forecastPath.length > 0 
-      ? forecastPath.map(pos => [pos.lon, pos.lat])
-      : [
-          [72.8, 18.5], // Starting position
-          [73.5, 19.0], // +24 hrs
-          [74.0, 19.5], // +48 hrs  
-          [74.5, 20.1], // +72 hrs
-          [75.0, 20.8], // +96 hrs
-          [75.8, 21.8], // +120 hrs
-        ];
-
-    const getRiskColor = (riskLevel?: 'low' | 'moderate' | 'high') => {
-      switch (riskLevel) {
-        case 'high': return '#ef4444';
-        case 'moderate': return '#f59e0b';
-        case 'low': return '#10b981';
-        default: return '#f59e0b';
-      }
-    };
-
-    const intensityLevels = [
-      { level: "Depression", color: "#10b981", radius: 8 },
-      { level: "Deep Depression", color: "#f59e0b", radius: 10 },
-      { level: "Cyclonic Storm", color: "#ef4444", radius: 12 },
-      { level: "Severe Cyclonic Storm", color: "#dc2626", radius: 14 },
-      { level: "Dissipating", color: "#6b7280", radius: 8 },
-      { level: "Remnant Low", color: "#9ca3af", radius: 6 },
-    ];
-
+    if (!mapContainer.current || map.current) return;
     map.current = new maplibregl.Map({
       container: mapContainer.current,
       style: {
@@ -81,16 +48,50 @@ const StableTrajectoryForecast = ({
       center: [74, 19.5],
       zoom: 5.5
     });
-
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+    return () => {
+      if (map.current) {
+        map.current.remove();
+        map.current = null;
+      }
+    };
+  }, []);
 
-    map.current.on('load', () => {
-      if (!map.current) return;
-      
-      console.log("StableTrajectoryForecast map loaded and ready");
-      
+  // Update trajectory and markers when forecastPath or props change
+  useEffect(() => {
+    if (!map.current) return;
+    const forecastCoordinates: [number, number][] = forecastPath.length > 0 
+      ? forecastPath.map(pos => [pos.lon, pos.lat])
+      : [
+          [72.8, 18.5],
+          [73.5, 19.0],
+          [74.0, 19.5],
+          [74.5, 20.1],
+          [75.0, 20.8],
+          [75.8, 21.8],
+        ];
+    const getRiskColor = (riskLevel?: 'low' | 'moderate' | 'high') => {
+      switch (riskLevel) {
+        case 'high': return '#ef4444';
+        case 'moderate': return '#f59e0b';
+        case 'low': return '#10b981';
+        default: return '#f59e0b';
+      }
+    };
+    const intensityLevels = [
+      { level: "Depression", color: "#10b981", radius: 8 },
+      { level: "Deep Depression", color: "#f59e0b", radius: 10 },
+      { level: "Cyclonic Storm", color: "#ef4444", radius: 12 },
+      { level: "Severe Cyclonic Storm", color: "#dc2626", radius: 14 },
+      { level: "Dissipating", color: "#6b7280", radius: 8 },
+      { level: "Remnant Low", color: "#9ca3af", radius: 6 },
+    ];
+    const updateLayers = () => {
+      // Remove old trajectory line and source
+      if (map.current!.getLayer('trajectory-line')) map.current!.removeLayer('trajectory-line');
+      if (map.current!.getSource('trajectory')) map.current!.removeSource('trajectory');
       // Add trajectory line
-      map.current.addSource('trajectory', {
+      map.current!.addSource('trajectory', {
         type: 'geojson',
         data: {
           type: 'Feature',
@@ -101,8 +102,7 @@ const StableTrajectoryForecast = ({
           }
         }
       });
-
-      map.current.addLayer({
+      map.current!.addLayer({
         id: 'trajectory-line',
         type: 'line',
         source: 'trajectory',
@@ -117,16 +117,17 @@ const StableTrajectoryForecast = ({
           'line-dasharray': [2, 2]
         }
       });
-
+      // Remove old markers (by removing all children of mapContainer except the map canvas)
+      const markerEls = mapContainer.current?.querySelectorAll('.forecast-marker');
+      markerEls?.forEach(el => el.remove());
       // Add forecast points
       forecastCoordinates.forEach((coord, i) => {
         const forecastData = forecastPath.length > 0 ? forecastPath[i] : null;
         const el = document.createElement('div');
-        
+        el.className = 'forecast-marker';
         // Use dynamic risk color if available, otherwise use intensity levels
         const pointColor = forecastData ? getRiskColor(forecastData.riskLevel) : (intensityLevels[i]?.color || '#f59e0b');
         const pointSize = intensityLevels[i]?.radius * 2 || 16;
-        
         el.style.cssText = `
           width: ${pointSize}px;
           height: ${pointSize}px;
@@ -136,31 +137,29 @@ const StableTrajectoryForecast = ({
           cursor: pointer;
           box-shadow: 0 2px 4px rgba(0,0,0,0.3);
         `;
-
         const popup = new maplibregl.Popup({ offset: 25 }).setHTML(`
-          <div style="padding: 8px; text-align: center;">
+          <div style=\"padding: 8px; text-align: center;\">
             <strong>+${i * 24} hrs</strong><br/>
             ${forecastData ? `Risk: ${forecastData.riskLevel?.toUpperCase()}` : intensityLevels[i]?.level || 'Forecast Point'}<br/>
             <small>${coord[1].toFixed(2)}°N, ${coord[0].toFixed(2)}°E</small>
           </div>
         `);
-
         new maplibregl.Marker(el)
           .setLngLat(coord)
           .setPopup(popup)
           .addTo(map.current!);
       });
-    });
-
-    return () => {
-      console.log("StableTrajectoryForecast cleanup");
-      if (map.current) {
-        map.current.remove();
-        map.current = null;
-      }
-      isInitialized.current = false;
     };
-  }, []); // Empty dependency array - initialize once
+    if (map.current.isStyleLoaded()) {
+      updateLayers();
+    } else {
+      const onStyleLoad = () => {
+        updateLayers();
+        map.current!.off('style.load', onStyleLoad);
+      };
+      map.current.on('style.load', onStyleLoad);
+    }
+  }, [forecastPath, cycloneName, intensity, coordinates]);
 
   return (
     <div className="mt-8 text-white bg-white/10 p-6 rounded shadow-lg border border-white/10">

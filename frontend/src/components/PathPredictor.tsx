@@ -145,16 +145,12 @@ const PathPredictor = ({
     setCurrentFrameIndex(stormPositions.length - 1);
   }, [stopAnimation, stormPositions]);
   
+  // Only initialize map once
   useEffect(() => {
-    // Initialize map if not already created
     if (!mapContainer.current || map.current) return;
-    
-    console.log("Initializing PathPredictor map");
-    
     const center = stormPositions.length > 0 
       ? [stormPositions[0].lon, stormPositions[0].lat] as [number, number]
       : [73.0, 19.0] as [number, number];
-    
     map.current = new maplibregl.Map({
       container: mapContainer.current,
       style: {
@@ -172,27 +168,41 @@ const PathPredictor = ({
       center: center,
       zoom: 6
     });
-
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
-    
     // Create cyclone icon element for marker
     const cycloneIcon = document.createElement('div');
     cycloneIcon.className = 'cyclone-marker';
     cycloneIcon.innerHTML = '🌀';
     cycloneIcon.style.fontSize = '24px';
     cycloneIcon.style.filter = 'drop-shadow(0 0 8px rgba(255, 255, 255, 0.7))';
-    
     // Initialize marker but don't add it yet
     markerRef.current = new maplibregl.Marker({ element: cycloneIcon });
-    
-    map.current.on('load', () => {
-      if (!map.current) return;
-      
-      console.log("PathPredictor map loaded");
-      
+    // Add marker to map
+    if (stormPositions.length > 0) {
+      const initialPos = stormPositions[0];
+      markerRef.current!.setLngLat([initialPos.lon, initialPos.lat])
+        .addTo(map.current!);
+    }
+    return () => {
+      stopAnimation();
+      if (map.current) {
+        map.current.remove();
+        map.current = null;
+      }
+    };
+  }, []);
+
+  // Update path and markers when positions change
+  useEffect(() => {
+    if (!map.current) return;
+    const updateLayers = () => {
+      // Remove old sources/layers if they exist
+      if (map.current.getLayer('storm-path-line')) map.current.removeLayer('storm-path-line');
+      if (map.current.getSource('storm-path')) map.current.removeSource('storm-path');
+      if (map.current.getLayer('predicted-path-line')) map.current.removeLayer('predicted-path-line');
+      if (map.current.getSource('predicted-path')) map.current.removeSource('predicted-path');
       // Add storm path as a polyline
       const coordinates = stormPositions.map(pos => [pos.lon, pos.lat]);
-      
       map.current.addSource('storm-path', {
         type: 'geojson',
         data: {
@@ -204,7 +214,6 @@ const PathPredictor = ({
           }
         }
       });
-      
       map.current.addLayer({
         id: 'storm-path-line',
         type: 'line',
@@ -219,11 +228,9 @@ const PathPredictor = ({
           'line-opacity': 0.8
         }
       });
-      
       // Add predicted path as dashed line
       if (predictedPoint) {
         const lastPos = stormPositions[stormPositions.length - 1];
-        
         map.current.addSource('predicted-path', {
           type: 'geojson',
           data: {
@@ -238,7 +245,6 @@ const PathPredictor = ({
             }
           }
         });
-        
         map.current.addLayer({
           id: 'predicted-path-line',
           type: 'line',
@@ -255,78 +261,18 @@ const PathPredictor = ({
           }
         });
       }
-      
-      // Add markers for each point
-      stormPositions.forEach((pos, idx) => {
-        const markerEl = document.createElement('div');
-        markerEl.className = 'position-marker';
-        markerEl.style.width = '12px';
-        markerEl.style.height = '12px';
-        markerEl.style.borderRadius = '50%';
-        markerEl.style.background = getRiskColor(pos.riskLevel);
-        markerEl.style.border = '2px solid white';
-        
-        const popup = new maplibregl.Popup({ offset: 15 }).setHTML(`
-          <div style="padding: 8px; text-align: center;">
-            <strong>${formatTimestamp(pos.timestamp)}</strong><br/>
-            ${pos.lat.toFixed(2)}°N, ${pos.lon.toFixed(2)}°E<br/>
-            ${pos.riskLevel ? `<span style="color:${getRiskColor(pos.riskLevel)}">${pos.riskLevel.toUpperCase()} RISK</span>` : ''}
-          </div>
-        `);
-        
-        new maplibregl.Marker({ element: markerEl })
-          .setLngLat([pos.lon, pos.lat])
-          .setPopup(popup)
-          .addTo(map.current!);
-      });
-      
-      // Add marker for predicted point if available
-      if (predictedPoint) {
-        const predictedEl = document.createElement('div');
-        predictedEl.className = 'predicted-marker';
-        predictedEl.style.width = '12px';
-        predictedEl.style.height = '12px';
-        predictedEl.style.borderRadius = '50%';
-        predictedEl.style.background = getRiskColor(predictedPoint.riskLevel as 'low' | 'moderate' | 'high');
-        predictedEl.style.border = '2px solid white';
-        predictedEl.style.opacity = '0.7';
-        
-        const predictedPopup = new maplibregl.Popup({ offset: 15 }).setHTML(`
-          <div style="padding: 8px; text-align: center;">
-            <strong>PREDICTED LOCATION</strong><br/>
-            ${predictedPoint.lat.toFixed(2)}°N, ${predictedPoint.lon.toFixed(2)}°E<br/>
-            <small style="color:#f97316">*Based on current trajectory</small>
-          </div>
-        `);
-        
-        new maplibregl.Marker({ element: predictedEl })
-          .setLngLat([predictedPoint.lon, predictedPoint.lat])
-          .setPopup(predictedPopup)
-          .addTo(map.current!);
-      }
-      
-      // Position the moving marker initially
-      if (stormPositions.length > 0) {
-        const initialPos = stormPositions[0];
-        markerRef.current!.setLngLat([initialPos.lon, initialPos.lat])
-          .addTo(map.current!);
-      }
-      
-      // Start animation if autoPlay is true
-      if (autoPlay) {
-        startAnimation();
-      }
-    });
-
-    return () => {
-      console.log("PathPredictor cleanup");
-      stopAnimation();
-      if (map.current) {
-        map.current.remove();
-        map.current = null;
-      }
+      // TODO: Add markers for each point if needed (optional, for clarity)
     };
-  }, [stormPositions, predictedPoint, autoPlay, startAnimation, stopAnimation, formatTimestamp, getRiskColor]);
+    if (map.current.isStyleLoaded()) {
+      updateLayers();
+    } else {
+      const onStyleLoad = () => {
+        updateLayers();
+        map.current.off('style.load', onStyleLoad);
+      };
+      map.current.on('style.load', onStyleLoad);
+    }
+  }, [stormPositions, predictedPoint]);
   
   // Update marker position when currentFrameIndex changes
   useEffect(() => {
